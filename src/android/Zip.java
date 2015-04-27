@@ -1,24 +1,19 @@
 package org.apache.cordova;
 
-import java.io.BufferedInputStream;
-import java.io.File;
-import java.io.FileOutputStream;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.FileNotFoundException;
-import java.util.zip.ZipEntry;
-import java.util.zip.ZipInputStream;
-
-
 import android.net.Uri;
-import org.apache.cordova.CallbackContext;
-import org.apache.cordova.CordovaPlugin;
-import org.apache.cordova.CordovaResourceApi.OpenForReadResult;
-import org.apache.cordova.PluginResult;
+import android.util.Log;
+
 import org.json.JSONException;
 import org.json.JSONObject;
 
-import android.util.Log;
+import java.io.BufferedInputStream;
+import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipInputStream;
 
 public class Zip extends CordovaPlugin {
 
@@ -58,34 +53,47 @@ public class Zip extends CordovaPlugin {
 
             // Since Cordova 3.3.0 and release of File plugins, files are accessed via cdvfile://
             // Accept a path or a URI for the source zip.
-            Uri zipUri = getUriForArg(zipFileName);
-            Uri outputUri = getUriForArg(outputDirectory);
 
             CordovaResourceApi resourceApi = webView.getResourceApi();
 
-            File tempFile = resourceApi.mapUriToFile(zipUri);
-            if (tempFile == null || !tempFile.exists()) {
+            File zipFile;
+            File outputDir;
+
+            if (zipFileName.startsWith("file:///android_asset")) {
+                zipFile = null;
+            } else {
+                Uri zipUri = getUriForArg(zipFileName);
+                zipFile = resourceApi.mapUriToFile(zipUri);
+            }
+
+            Uri outputUri = getUriForArg(outputDirectory);
+            outputDir = resourceApi.mapUriToFile(outputUri);
+
+            if (!zipFileName.startsWith("file:///android_asset") && (zipFile == null || !zipFile.exists())) {
                 String errorMessage = "Zip file does not exist";
                 callbackContext.error(errorMessage);
                 Log.e(LOG_TAG, errorMessage);
                 return;
             }
 
-            File outputDir = resourceApi.mapUriToFile(outputUri);
             outputDirectory = outputDir.getAbsolutePath();
             outputDirectory += outputDirectory.endsWith(File.separator) ? "" : File.separator;
-            if (outputDir == null || (!outputDir.exists() && !outputDir.mkdirs())){
+            if (outputDir == null || (!outputDir.exists() && !outputDir.mkdirs())) {
                 String errorMessage = "Could not create output directory";
                 callbackContext.error(errorMessage);
                 Log.e(LOG_TAG, errorMessage);
                 return;
             }
 
-            OpenForReadResult zipFile = resourceApi.openForRead(zipUri);
-            ProgressEvent progress = new ProgressEvent();
-            progress.setTotal(zipFile.length);
+            if (zipFileName.startsWith("file:///android_asset")) {
+                inputStream = new BufferedInputStream(cordova.getActivity().getAssets().open(zipFileName.replace("file:///android_asset/","")));
+            } else {
+                inputStream = new BufferedInputStream(new FileInputStream(zipFile));
+            }
 
-            inputStream = new BufferedInputStream(zipFile.inputStream);
+            ProgressEvent progress = new ProgressEvent();
+            progress.setTotal(zipFile == null ? 50000 * 1024 : zipFile.length());
+
             inputStream.mark(10);
             int magic = readInt(inputStream);
 
@@ -116,23 +124,21 @@ public class Zip extends CordovaPlugin {
             byte[] buffer = new byte[32 * 1024];
             boolean anyEntries = false;
 
-            while ((ze = zis.getNextEntry()) != null)
-            {
+            while ((ze = zis.getNextEntry()) != null) {
                 anyEntries = true;
                 String compressedName = ze.getName();
 
                 if (ze.isDirectory()) {
-                   File dir = new File(outputDirectory + compressedName);
-                   dir.mkdirs();
+                    File dir = new File(outputDirectory + compressedName);
+                    dir.mkdirs();
                 } else {
                     File file = new File(outputDirectory + compressedName);
                     file.getParentFile().mkdirs();
-                    if(file.exists() || file.createNewFile()){
+                    if (file.exists() || file.createNewFile()) {
                         Log.w("Zip", "extracting: " + file.getPath());
                         FileOutputStream fout = new FileOutputStream(file);
                         int count;
-                        while ((count = zis.read(buffer)) != -1)
-                        {
+                        while ((count = zis.read(buffer)) != -1) {
                             fout.write(buffer, 0, count);
                         }
                         fout.close();
@@ -182,25 +188,31 @@ public class Zip extends CordovaPlugin {
     private static class ProgressEvent {
         private long loaded;
         private long total;
+
         public long getLoaded() {
             return loaded;
         }
+
         public void setLoaded(long loaded) {
             this.loaded = loaded;
         }
+
         public void addLoaded(long add) {
             this.loaded += add;
         }
+
         public long getTotal() {
             return total;
         }
+
         public void setTotal(long total) {
             this.total = total;
         }
+
         public JSONObject toJSONObject() throws JSONException {
             return new JSONObject(
                     "{loaded:" + loaded +
-                    ",total:" + total + "}");
+                            ",total:" + total + "}");
         }
     }
 }
